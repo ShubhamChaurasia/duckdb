@@ -3,6 +3,7 @@ add_library_unity(
   OBJECT
   duckdb_connection_count.cpp
   duckdb_approx_database_count.cpp
+  catalog_scan_filter.cpp
   duckdb_columns.cpp
   duckdb_constraints.cpp
   duckdb_coordinate_systems.cpp

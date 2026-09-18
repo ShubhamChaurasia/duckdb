@@ -1,3 +1,4 @@
+#include "duckdb/function/table/catalog_scan_filter.hpp"
 #include "duckdb/function/table/system_functions.hpp"
 
 #include "duckdb/catalog/catalog.hpp"
@@ -88,18 +89,14 @@ static unique_ptr<FunctionData> DuckDBColumnsBind(ClientContext &context, TableF
 	names.emplace_back("generation_expression");
 	return_types.emplace_back(LogicalType::VARCHAR);
 
-	return nullptr;
+	return make_uniq<CatalogScanBindData>();
 }
 
 static unique_ptr<GlobalTableFunctionState> DuckDBColumnsInit(ClientContext &context, TableFunctionInitInput &input) {
 	auto result = make_uniq<DuckDBColumnsData>();
 
-	// scan all the schemas for tables and views and collect them
-	auto schemas = Catalog::GetAllSchemas(context);
-	for (auto &schema : schemas) {
-		schema.get().Scan(context, CatalogType::TABLE_ENTRY,
-		                  [&](CatalogEntry &entry) { result->entries.push_back(entry); });
-	}
+	CatalogFunctionPushdown::ScanEntries(context, input, CatalogType::TABLE_ENTRY,
+	                                     [&](CatalogEntry &entry) { result->entries.push_back(entry); });
 	return std::move(result);
 }
 
@@ -419,7 +416,10 @@ static void DuckDBColumnsFunction(ClientContext &context, TableFunctionInput &da
 }
 
 void DuckDBColumnsFun::RegisterFunction(BuiltinFunctions &set) {
-	set.AddFunction(TableFunction("duckdb_columns", {}, DuckDBColumnsFunction, DuckDBColumnsBind, DuckDBColumnsInit));
+	TableFunction duckdb_columns("duckdb_columns", {}, DuckDBColumnsFunction, DuckDBColumnsBind, DuckDBColumnsInit);
+	duckdb_columns.pushdown_complex_filter = CatalogFunctionPushdown::PushdownComplexFilter;
+	duckdb_columns.to_string = CatalogFunctionPushdown::ToString;
+	set.AddFunction(std::move(duckdb_columns));
 }
 
 } // namespace duckdb

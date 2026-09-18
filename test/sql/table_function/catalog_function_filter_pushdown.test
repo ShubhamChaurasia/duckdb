@@ -1,0 +1,239 @@
+# name: test/sql/table_function/catalog_function_filter_pushdown.test
+# description: the catalog functions narrow their enumeration by name filters; results equal the full enumeration
+# group: [table_function]
+
+statement ok
+PRAGMA enable_verification
+
+statement ok
+ATTACH ':memory:' AS a;
+
+statement ok
+ATTACH ':memory:' AS b;
+
+statement ok
+CREATE SCHEMA a.s1;
+
+statement ok
+CREATE SCHEMA a.s2;
+
+statement ok
+CREATE SCHEMA b.s1;
+
+statement ok
+CREATE TABLE a.s1.t1(x INT, y VARCHAR);
+
+statement ok
+CREATE TABLE a.s1."T2"(z INT);
+
+statement ok
+CREATE TABLE a.s2.t2(x INT);
+
+statement ok
+CREATE TABLE b.s1.t3(x INT);
+
+statement ok
+CREATE VIEW a.s1.v1 AS SELECT 1 AS c;
+
+# constant on the left
+query I
+SELECT table_name FROM duckdb_tables() WHERE 't3' = table_name;
+----
+t3
+
+# exact match
+query III
+SELECT database_name, schema_name, table_name FROM duckdb_tables() WHERE table_name = 't2' ORDER BY 1, 2;
+----
+a	s2	t2
+
+query I
+SELECT count(*) FROM duckdb_tables() WHERE table_name = 'T1';
+----
+0
+
+# missing names
+query I
+SELECT count(*) FROM duckdb_tables() WHERE database_name = 'nope';
+----
+0
+
+query I
+SELECT count(*) FROM duckdb_tables() WHERE database_name = 'a' AND schema_name = 'nope';
+----
+0
+
+# OR across levels
+query I
+SELECT count(*) FROM duckdb_tables() WHERE database_name = 'nope' OR schema_name = 's2';
+----
+1
+
+# two constraints on one level
+query I
+SELECT count(*) FROM duckdb_tables() WHERE table_name = 't1' AND table_name IN ('t1', 't3');
+----
+1
+
+query I
+SELECT count(*) FROM duckdb_tables() WHERE table_name = 't1' AND table_name = 't3';
+----
+0
+
+# mixed case
+statement ok
+ATTACH ':memory:' AS MyDb;
+
+statement ok
+CREATE TABLE MyDb.T1(i INT);
+
+query I
+SELECT count(*) FROM duckdb_tables() WHERE database_name = 'MyDb' AND lower(database_name) = 'mydb';
+----
+1
+
+query I
+SELECT count(*) FROM duckdb_tables() WHERE database_name = 'MyDb' AND lower(table_name) = 't1' AND upper(table_name) = 'T1';
+----
+1
+
+# duplicate spellings
+query I
+SELECT count(*) FROM duckdb_tables() WHERE database_name IN ('MyDb', 'mydb');
+----
+1
+
+query I
+SELECT count(*) FROM duckdb_tables() WHERE lower(database_name) IN ('mydb', 'MYDB') AND table_name IN ('T1', 't1');
+----
+1
+
+# schema order
+statement ok
+ATTACH ':memory:' AS o;
+
+statement ok
+CREATE SCHEMA o.a; CREATE SCHEMA o."B"; CREATE SCHEMA o.c; CREATE TABLE o.a.t(i INT); CREATE TABLE o."B".t(i INT); CREATE TABLE o.c.t(i INT);
+
+query I
+SELECT string_agg(schema_name, ',' ORDER BY ordinality) FROM duckdb_tables() WITH ORDINALITY AS t(database_name, database_oid, schema_name, schema_oid, table_name, table_oid, comment, tags, internal, temporary, has_primary_key, estimated_size, column_count, index_count, check_constraint_count, sql, ordinality) WHERE database_name = 'o';
+----
+a,B,c
+
+# complete
+query I
+SELECT count(*) FROM duckdb_tables() WHERE NOT internal AND database_name IN ('a', 'b');
+----
+4
+
+# WITH ORDINALITY
+query I
+SELECT count(*) FROM duckdb_tables() WITH ORDINALITY WHERE table_name = 't3' AND ordinality > 1;
+----
+1
+
+# duckdb_columns, information_schema
+query II
+SELECT column_name, data_type FROM duckdb_columns() WHERE database_name = 'a' AND schema_name = 's1' AND table_name = 't1' ORDER BY column_index;
+----
+x	INTEGER
+y	VARCHAR
+
+query I
+SELECT column_name FROM information_schema.columns WHERE table_catalog = 'a' AND table_schema = 's1' AND table_name = 't1' ORDER BY ordinal_position;
+----
+x
+y
+
+# views
+query I
+SELECT column_name FROM duckdb_columns() WHERE schema_name = 's1' AND table_name = 'v1';
+----
+c
+
+# prepared statement
+statement ok
+PREPARE q AS SELECT table_name FROM duckdb_tables() WHERE database_name = 'a' AND schema_name = $1 ORDER BY 1;
+
+query I
+EXECUTE q('s1');
+----
+T2
+t1
+
+query I
+EXECUTE q('s2');
+----
+t2
+
+# SHOW TABLES FROM
+query I
+SHOW TABLES FROM a.s1;
+----
+T2
+t1
+v1
+
+query I
+SHOW TABLES FROM b.s1;
+----
+t3
+
+# lower()/upper()
+query I
+SELECT table_name FROM duckdb_tables() WHERE lower(schema_name) = 's2';
+----
+t2
+
+query I
+SELECT table_name FROM duckdb_tables() WHERE upper(table_name) = 'T3';
+----
+t3
+
+# duckdb_views
+query III
+SELECT database_name, schema_name, view_name FROM duckdb_views() WHERE database_name = 'a' AND schema_name = 's1';
+----
+a	s1	v1
+
+query I
+SELECT count(*) FROM duckdb_views() WHERE database_name = 'a' AND schema_name = 's1' AND view_name = 'nope';
+----
+0
+
+#---------------------------------------------------------------------------
+# plan
+#---------------------------------------------------------------------------
+query II
+EXPLAIN SELECT table_name FROM duckdb_tables() WHERE database_name = 'a' AND schema_name = 's1';
+----
+physical_plan	<REGEX>:[\s\S]*Catalog Filters:[\s\S]*database_name IN \('a'\)[\s\S]*schema_name IN \('s1'\)[\s\S]*
+
+# plan: lower()
+query II
+EXPLAIN SHOW TABLES FROM a.s1;
+----
+physical_plan	<REGEX>:[\s\S]*Catalog Filters:[\s\S]*schema_name IN \('s1'\)[\s\S]*
+
+query II
+EXPLAIN SELECT column_name FROM information_schema.columns WHERE table_schema = 's1' AND table_name = 't1';
+----
+physical_plan	<REGEX>:[\s\S]*Catalog Filters:[\s\S]*table_name IN \('t1'\)[\s\S]*
+
+# plan: view_name
+query II
+EXPLAIN SELECT view_name FROM duckdb_views() WHERE database_name = 'a' AND view_name = 'v1';
+----
+physical_plan	<REGEX>:.*Catalog Filters:[\s\S]*view_name IN \('v1'\).*
+
+# plan: OR is not narrowed
+query II
+EXPLAIN SELECT table_name FROM duckdb_tables() WHERE database_name = 'nope' OR schema_name = 's2';
+----
+physical_plan	<!REGEX>:[\s\S]*Catalog Filters[\s\S]*
+
+# plan: WITH ORDINALITY is not narrowed
+query II
+EXPLAIN SELECT table_name FROM duckdb_tables() WITH ORDINALITY WHERE table_name = 't3';
+----
+physical_plan	<!REGEX>:[\s\S]*Catalog Filters[\s\S]*

@@ -9,6 +9,7 @@
 #pragma once
 
 #include "duckdb/catalog/catalog_entry.hpp"
+#include "duckdb/catalog/catalog_scan_filter.hpp"
 #include "duckdb/catalog/catalog_transaction.hpp"
 #include "duckdb/common/atomic.hpp"
 #include "duckdb/common/enums/catalog_lookup_behavior.hpp"
@@ -289,6 +290,11 @@ public:
 	          OnEntryNotFound if_not_found);
 	//! Scans all the schemas in the system one-by-one, invoking the callback for each entry
 	DUCKDB_API virtual void ScanSchemas(ClientContext &context, std::function<void(SchemaCatalogEntry &)> callback) = 0;
+
+	//! Scans schemas with specified filters. Extensions can choose to narrow down the schema scan with filters.
+	//! Filter node above scan is preserved in case they are not enforced by extension.
+	DUCKDB_API virtual void ScanEntries(ClientContext &context, CatalogType type, const CatalogScanFilter &filter,
+	                                    const std::function<void(CatalogEntry &)> &callback);
 
 	//! Gets the entry described by the (optionally catalog/schema-qualified) EntryLookupInfo. If the entry does not
 	//! exist behavior depends on OnEntryNotFound

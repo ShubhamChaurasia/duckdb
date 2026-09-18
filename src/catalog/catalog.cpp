@@ -1432,6 +1432,13 @@ vector<reference<SchemaCatalogEntry>> Catalog::GetSchemas(ClientContext &context
 	return GetSchemas(retriever, catalog_name);
 }
 
+void Catalog::ScanEntries(ClientContext &context, CatalogType type, const CatalogScanFilter &filter,
+                          const std::function<void(CatalogEntry &)> &callback) {
+	for (auto &schema : GetSchemas(context)) {
+		schema.get().Scan(context, type, callback);
+	}
+}
+
 vector<reference<SchemaCatalogEntry>> Catalog::GetAllSchemas(ClientContext &context) {
 	vector<reference<SchemaCatalogEntry>> result;
 

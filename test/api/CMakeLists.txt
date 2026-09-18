@@ -17,6 +17,7 @@ set(TEST_API_OBJECTS
     test_bind_statement.cpp
     test_scalar_function_decimal_return.cpp
     test_aggregate_state_bind_data.cpp
+    test_catalog_scan_entries.cpp
     test_config.cpp
     test_connection_secrets.cpp
     test_copy_output_lifecycle.cpp
